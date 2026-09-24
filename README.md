@@ -34,11 +34,16 @@ shows all of it. It stops only the processes you ask it to stop.
 - **Right-click** (or Control-click, or Option-click) to open the menu:
   - **Keep awake for…**: from 30 minutes to 8 hours.
   - **Display may sleep**: keep the system awake, but let the screen turn off.
-  - **caffeinate now**: every `caffeinate` process with its flags and the time
-    left. Yours is marked "mine". You can stop one of them or all of them.
+  - **caffeinate now**: every `caffeinate` process, who started it, from which
+    folder, and the time left, for example
+    `Claude Code (my-project) · 1 h 20 min left`. If the app or the session
+    that started it has quit, the line says so: that `caffeinate` is left over
+    and safe to stop. The submenu shows the flags and the start time, and
+    stops the process.
   - **Also blocking idle sleep**: other apps that keep the Mac awake right
     now, for example the Claude desktop app.
-  - **Start at login**.
+  - **Start at login**. On the first start the app asks about it once.
+  - **Check for updates**.
 - **Hover** over the icon to see a short summary.
 
 The menu is in Russian on a Russian system and in English on any other.
@@ -53,6 +58,26 @@ The list comes from `IOPMCopyAssertionsByProcess`, the same data that
 `pmset -g assertions` prints. A process keeps the Mac awake if it blocks idle
 sleep of the system or of the display. `caffeinate -s` counts only on power,
 because macOS ignores it on battery.
+
+"Who started it" is the app that macOS holds responsible for the process. It
+stays the same after `nohup … &`, when the shell in between exits and launchd
+becomes the parent: for an AI agent it is the agent's app, for a terminal
+command it is the terminal. When that app quits, macOS forgets it, and launchd
+adopts the process. A real launchd job was started by launchd and leads its own
+process group. A left-over process fails one of these checks, and that is how
+the menu knows its launcher has quit. The folder is the working directory of
+the process.
+
+## Updates
+
+Once a day the app asks the GitHub API for the latest release of this
+repository. If it is newer, the menu shows **Update to X…**. The app downloads
+the zip, checks its Ed25519 signature against the public key built into the
+app, replaces itself and restarts. If the app was keeping the Mac awake, it
+keeps doing so after the restart. A zip without a valid signature is never
+installed. The request to GitHub is the only thing the app sends.
+
+Version 1.0.0 has no updater: install 1.1.0 or later once by hand.
 
 ## Limits
 
@@ -98,13 +123,36 @@ cd caffeine-bar
 ./build.sh install
 ```
 
-`build.sh` compiles `main.swift` with `swiftc` for both Apple Silicon and Intel,
+`build.sh` compiles the Swift files with `swiftc` for both Apple Silicon and Intel,
 signs the app ad hoc, copies it to `~/Applications` and starts it. A local
 build has no quarantine flag, so Gatekeeper lets it run. Without `install`, the
 script only builds `build/CaffeineBar.app`. `./build.sh zip` also packs it into
 a zip for a release.
 
 To start the app at login, open the menu and choose **Start at login**.
+
+### Release
+
+The signing key lives in the login Keychain of the maintainer's Mac. No app is
+trusted to read it, so macOS asks for the Keychain password each time a zip is
+signed. Press **Allow**, never **Always Allow**: that would let any
+`swift` script read the key. Create the key once and put the printed public
+key into `Updater.swift`:
+
+```bash
+swift -suppress-warnings scripts/update-key.swift new
+```
+
+Keep a backup of the key: `export` prints it for a password manager, and
+`import` reads it back on another Mac. Without the key, installed copies cannot
+update themselves, and users have to install the next version by hand.
+
+For each release, raise `VERSION` in `build.sh`, then:
+
+```bash
+./build.sh zip
+gh release create v1.2.3 build/CaffeineBar-1.2.3.zip build/CaffeineBar-1.2.3.zip.sig
+```
 
 ## Tip for scripts and agents
 
