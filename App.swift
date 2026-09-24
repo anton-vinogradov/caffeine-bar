@@ -18,7 +18,8 @@ private let durations: [(title: String, seconds: Int)] = [
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    private var item = AppDelegate.makeItem()
+    /** Created in launch(): after an update the old copy may still hold its icon for a moment. */
+    private var item: NSStatusItem!
 
     private let menu = NSMenu()
 
@@ -67,6 +68,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        guard let old = argument("--after").flatMap(pid_t.init) else { return launch() }
+
+        // After an update the old copy starts this one and then quits: wait for it, so there is one icon and one caffeinate.
+        let deadline = Date().addingTimeInterval(10)
+        let wait = Timer(timeInterval: 0.1, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard kill(old, 0) != 0 || Date() > deadline else { return }
+                timer.invalidate()
+                self?.launch()
+            }
+        }
+        RunLoop.main.add(wait, forMode: .common)
+    }
+
+    private func argument(_ name: String) -> String? {
+        let args = CommandLine.arguments
+        return args.firstIndex(of: name).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
+    }
+
+    private func launch() {
+        item = AppDelegate.makeItem()
         menu.delegate = self
         wire(item)
 
@@ -136,7 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
      * full-screen app and a sleeping display all look the same from here, so they are ruled out first.
      */
     private var hiddenByNotch: Bool {
-        guard item.isVisible, NSMenu.menuBarVisible(), CGDisplayIsAsleep(CGMainDisplayID()) == 0,
+        guard let item, item.isVisible, NSMenu.menuBarVisible(), CGDisplayIsAsleep(CGMainDisplayID()) == 0,
               let window = item.button?.window, let right = window.screen?.auxiliaryTopRightArea else { return false }
 
         return !window.occlusionState.contains(.visible) || window.frame.minX < right.minX
@@ -190,6 +212,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         // Opening the app again is the only way in when a full menu bar has hidden the icon behind the notch.
+        guard item != nil else { return false }
+
         let wasOn = own != nil
         let hidden = hiddenByNotch
 
@@ -572,28 +596,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /** Starts the new copy once this process is gone and hands it the time left on own caffeinate. */
+    /**
+     * Starts the new copy while this one still runs, then quits; the new copy waits for that (--after). A helper
+     * process cannot do the start: once this app is gone, LaunchServices refuses its request with error -600.
+     */
     private func relaunch() {
-        var open = [Bundle.main.bundlePath]
+        var args = ["--after", String(ProcessInfo.processInfo.processIdentifier)]
 
         if own != nil {
             // Arguments, not saved state: if the new copy never starts, nothing is left to resume by surprise later.
-            open += ["--args", "--resume", String(ownLeft.map { max(1, Int($0.rounded(.up))) } ?? 0)]
+            args += ["--resume", String(ownLeft.map { max(1, Int($0.rounded(.up))) } ?? 0)]
         }
 
-        let sh = Process()
-        sh.executableURL = URL(fileURLWithPath: "/bin/sh")
-        sh.arguments = ["-c", "while kill -0 \(getpid()) 2>/dev/null; do sleep 0.2; done; exec /usr/bin/open \"$@\"", "sh"] + open
-        try? sh.run()
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        config.activates = false
+        config.arguments = args
 
-        NSApp.terminate(nil)
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: config) { [weak self] _, error in
+            Task { @MainActor in
+                guard let error else { return NSApp.terminate(nil) }
+
+                self?.present {
+                    self?.show(error, title: tr("The new version is installed but did not start. Open CaffeineBar again.",
+                                                "Новая версия установлена, но не запустилась. Откройте CaffeineBar ещё раз."))
+                }
+            }
+        }
     }
 
     /** `--resume <seconds>` from relaunch(): 0 means no time limit. */
     private func resume() {
-        let args = CommandLine.arguments
-
-        guard let i = args.firstIndex(of: "--resume"), i + 1 < args.count, let seconds = Int(args[i + 1]) else { return }
+        guard let seconds = argument("--resume").flatMap(Int.init) else { return }
 
         start(for: seconds > 0 ? seconds : nil)
     }

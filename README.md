@@ -86,7 +86,10 @@ app, replaces itself and restarts. If the app was keeping the Mac awake, it
 keeps doing so after the restart. A zip without a valid signature is never
 installed. The request to GitHub is the only thing the app sends.
 
-Version 1.0.0 has no updater: install 1.1.0 or later once by hand.
+Version 1.0.0 has no updater: install 1.1.0 or later once by hand. Versions
+1.1.0 and 1.2.0 install an update but do not start again after it: open
+CaffeineBar once more from Spotlight or Finder. From 1.2.1 on, the app restarts
+by itself.
 
 ## Limits
 

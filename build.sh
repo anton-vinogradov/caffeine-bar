@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION=1.2.0
+VERSION=1.2.1
 APP=build/CaffeineBar.app
 
 rm -rf build
