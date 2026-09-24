@@ -94,6 +94,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private var holders: [Holder] = []
 
+    private var shown = ""
+
     private let clock: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm"
@@ -140,7 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.messageText = summary()
         alert.informativeText = tr(
             "If you cannot see the icon in the menu bar, the notch hides it: hold ⌘ and drag icons, or hide some in System Settings → Menu Bar.",
-            "Если значка не видно в строке меню, его закрыл вырез экрана: перетащите значки с зажатой ⌘ или скройте лишние в Настройках → Строка меню.")
+            "Если значка не видно в строке меню, его закрыл вырез экрана: перетащите значки с зажатой ⌘ или скройте лишние в Системных настройках → Строка меню.")
         alert.addButton(withTitle: own == nil ? tr("Keep awake", "Не давать спать") : tr("Turn off", "Выключить"))
         alert.addButton(withTitle: tr("Close", "Закрыть"))
 
@@ -385,6 +387,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let symbol = own != nil ? "cup.and.heat.waves.fill" : foreign.isEmpty ? "cup.and.saucer" : "cup.and.heat.waves"
 
         let text = summary()
+
+        // Redrawing the status item costs ~20x more than reading the assertions, so skip it when nothing changed.
+        guard symbol + text != shown else { return }
+        shown = symbol + text
 
         let img = NSImage(systemSymbolName: symbol, accessibilityDescription: text)
         img?.isTemplate = true

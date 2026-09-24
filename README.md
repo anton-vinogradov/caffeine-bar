@@ -70,8 +70,27 @@ These come from macOS, not from this app:
 
 ## Install
 
-You need macOS 15 or later and the Xcode Command Line Tools
-(`xcode-select --install`).
+You need macOS 15 or later. The app runs on Apple Silicon and Intel Macs.
+
+### Download
+
+1. Download `CaffeineBar-<version>.zip` from the
+   [latest release](https://github.com/anton-vinogradov/caffeine-bar/releases/latest)
+   and unzip it.
+2. Move `CaffeineBar.app` to `~/Applications` or `/Applications`.
+3. The app is signed ad hoc, not by an Apple developer ID, so macOS blocks
+   the first start. Remove the quarantine flag once:
+
+   ```bash
+   xattr -dr com.apple.quarantine ~/Applications/CaffeineBar.app
+   ```
+
+   Or try to open the app, then go to System Settings → Privacy & Security and
+   click **Open Anyway**.
+
+### Build from source
+
+You also need the Xcode Command Line Tools (`xcode-select --install`).
 
 ```bash
 git clone https://github.com/anton-vinogradov/caffeine-bar.git
@@ -79,10 +98,11 @@ cd caffeine-bar
 ./build.sh install
 ```
 
-`build.sh` compiles `main.swift` with `swiftc`, signs the app ad hoc, copies it
-to `~/Applications` and starts it. A local build has no quarantine flag, so
-Gatekeeper lets it run. Without `install`, the script only builds
-`build/CaffeineBar.app`.
+`build.sh` compiles `main.swift` with `swiftc` for both Apple Silicon and Intel,
+signs the app ad hoc, copies it to `~/Applications` and starts it. A local
+build has no quarantine flag, so Gatekeeper lets it run. Without `install`, the
+script only builds `build/CaffeineBar.app`. `./build.sh zip` also packs it into
+a zip for a release.
 
 To start the app at login, open the menu and choose **Start at login**.
 

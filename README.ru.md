@@ -67,13 +67,33 @@ caffeine-bar раз в 2 секунды читает те же данные, ч�
   2 часа — это 2 часа бодрствования.
 - Если строка меню заполнена, macOS прячет новые значки под вырезом экрана.
   Освободите место: перетащите значки с зажатой ⌘ или скройте лишние в
-  Настройках → Строка меню. Если открыть приложение ещё раз через Spotlight или
-  Finder, оно покажет окно с состоянием и кнопкой включения.
+  Системных настройках → Строка меню. Если открыть приложение ещё раз через
+  Spotlight или Finder, оно покажет окно с состоянием и кнопкой включения.
 
 ## Установка
 
-Нужны macOS 15 или новее и Xcode Command Line Tools
-(`xcode-select --install`).
+Нужна macOS 15 или новее. Приложение работает на Apple Silicon и Intel.
+
+### Скачать готовое
+
+1. Скачайте `CaffeineBar-<версия>.zip` из
+   [последнего релиза](https://github.com/anton-vinogradov/caffeine-bar/releases/latest)
+   и распакуйте.
+2. Перенесите `CaffeineBar.app` в `~/Applications` или `/Applications`.
+3. Приложение подписано ad hoc, без сертификата разработчика Apple, поэтому
+   первый запуск macOS заблокирует. Снимите флаг карантина один раз:
+
+   ```bash
+   xattr -dr com.apple.quarantine ~/Applications/CaffeineBar.app
+   ```
+
+   Или попробуйте открыть приложение, затем зайдите в Системные
+   настройки → Конфиденциальность и безопасность и нажмите **Все равно
+   открыть**.
+
+### Собрать самому
+
+Дополнительно нужны Xcode Command Line Tools (`xcode-select --install`).
 
 ```bash
 git clone https://github.com/anton-vinogradov/caffeine-bar.git
@@ -81,10 +101,11 @@ cd caffeine-bar
 ./build.sh install
 ```
 
-`build.sh` собирает `main.swift` через `swiftc`, подписывает приложение ad hoc,
-копирует его в `~/Applications` и запускает. У локальной сборки нет флага
-карантина, поэтому Gatekeeper её пропускает. Без `install` скрипт только
-собирает `build/CaffeineBar.app`.
+`build.sh` собирает `main.swift` через `swiftc` сразу для Apple Silicon и
+Intel, подписывает приложение ad hoc, копирует его в `~/Applications` и
+запускает. У локальной сборки нет флага карантина, поэтому Gatekeeper её
+пропускает. Без `install` скрипт только собирает `build/CaffeineBar.app`.
+`./build.sh zip` ещё и упаковывает его в zip для релиза.
 
 Чтобы приложение запускалось при входе, выберите в меню **Запускать при
 входе**.
