@@ -18,7 +18,7 @@ private let durations: [(title: String, seconds: Int)] = [
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    private var item = AppDelegate.makeItem()
 
     private let menu = NSMenu()
 
@@ -38,6 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var checking = false
 
     private var installing = false
+
+    private var notchCheck: Timer?
 
     private let clock: DateFormatter = {
         let f = DateFormatter()
@@ -66,12 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ note: Notification) {
         menu.delegate = self
-
-        if let button = item.button {
-            button.target = self
-            button.action = #selector(clicked)
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        }
+        wire(item)
 
         resume()
         refresh()
@@ -91,10 +88,100 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             MainActor.assumeIsolated { self?.checkIfDue() }
         }
 
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.scheduleNotchCheck() }
+        }
+
+        // build.sh starts the fresh build once with --smoke to see that it gets this far.
+        if CommandLine.arguments.contains("--smoke") {
+            NSApp.terminate(nil)
+        }
+
         present(after: 1) { [weak self] in
             self?.welcomeOnFirstLaunch()
             self?.checkIfDue()
+            self?.scheduleNotchCheck()
         }
+    }
+
+    private static let autosaveName = "CaffeineBar"
+
+    /** The autosave name makes macOS keep the icon where it was put, instead of adding it as the newest item on the left. */
+    private static func makeItem() -> NSStatusItem {
+        // Up to 1.1.0 the icon had the automatic name Item-0: carry over where the user dragged or hid it.
+        let defaults = UserDefaults.standard
+        for key in ["NSStatusItem Preferred Position", "NSStatusItem VisibleCC"] {
+            if defaults.object(forKey: "\(key) \(autosaveName)") == nil, let old = defaults.object(forKey: "\(key) Item-0") {
+                defaults.set(old, forKey: "\(key) \(autosaveName)")
+            }
+        }
+
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.autosaveName = autosaveName
+        return item
+    }
+
+    private func wire(_ item: NSStatusItem) {
+        guard let button = item.button else { return }
+
+        button.target = self
+        button.action = #selector(clicked)
+        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+    }
+
+    /**
+     * True when a full menu bar made macOS hide the icon. isVisible stays true then; the icon's window is simply not
+     * shown. macOS also hides icons right of the notch line, next to the leftmost visible one, so the window's
+     * visibility decides, and the frame only backs it up. The icon the user hid on purpose, a menu bar hidden by a
+     * full-screen app and a sleeping display all look the same from here, so they are ruled out first.
+     */
+    private var hiddenByNotch: Bool {
+        guard item.isVisible, NSMenu.menuBarVisible(), CGDisplayIsAsleep(CGMainDisplayID()) == 0,
+              let window = item.button?.window, let right = window.screen?.auxiliaryTopRightArea else { return false }
+
+        return !window.occlusionState.contains(.visible) || window.frame.minX < right.minX
+    }
+
+    /** One pending check at a time: screen changes come in bursts. */
+    private func scheduleNotchCheck() {
+        notchCheck?.invalidate()
+        notchCheck = Timer(timeInterval: 2, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.offerToUnhide() }
+        }
+        RunLoop.main.add(notchCheck!, forMode: .common)
+    }
+
+    /** Asks once, ever: after that, opening the app again still offers the move. */
+    private func offerToUnhide() {
+        guard hiddenByNotch, !UserDefaults.standard.bool(forKey: "notchOffered") else { return }
+
+        UserDefaults.standard.set(true, forKey: "notchOffered")
+
+        let alert = NSAlert()
+        alert.messageText = tr("The CaffeineBar icon is hidden behind the notch", "Значок CaffeineBar спрятан под вырезом экрана")
+        alert.informativeText = tr(
+            "The menu bar is full, so macOS hid the newest icon. Move the cup next to the system icons on the right? Another app's icon will go under the notch instead.",
+            "В строке меню не хватает места, и macOS спрятала самый новый значок. Поставить чашку справа, рядом с системными значками? Тогда под вырез уйдёт значок другого приложения.")
+        alert.addButton(withTitle: tr("Move to the right", "Поставить справа"))
+        alert.addButton(withTitle: tr("Leave it", "Оставить как есть"))
+
+        if ask(alert) == .alertFirstButtonReturn {
+            moveIconRight()
+        }
+    }
+
+    private func moveIconRight() {
+        // removeStatusItem wipes the item's saved keys, so the new position goes in between removing and creating.
+        NSStatusBar.system.removeStatusItem(item)
+
+        // Undocumented: the preferred position is the distance from the right screen edge. System icons use 140…367.
+        UserDefaults.standard.set(400.0, forKey: "NSStatusItem Preferred Position \(AppDelegate.autosaveName)")
+
+        item = AppDelegate.makeItem()
+        wire(item)
+
+        shown = ""
+        refresh()
     }
 
     func applicationWillTerminate(_ note: Notification) {
@@ -104,18 +191,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         // Opening the app again is the only way in when a full menu bar has hidden the icon behind the notch.
         let wasOn = own != nil
+        let hidden = hiddenByNotch
 
         let alert = NSAlert()
         alert.messageText = summary()
-        alert.informativeText = tr(
-            "If you cannot see the icon in the menu bar, the notch hides it: hold ⌘ and drag icons, or hide some in System Settings → Menu Bar.",
-            "Если значка не видно в строке меню, его закрыл вырез экрана: перетащите значки с зажатой ⌘ или скройте лишние в Системных настройках → Строка меню.")
+        alert.informativeText = hidden
+            ? tr("The icon is hidden behind the notch right now.", "Значок сейчас спрятан под вырезом экрана.")
+            : tr("The icon is in the menu bar.", "Значок — в строке меню.")
         alert.addButton(withTitle: wasOn ? tr("Turn off", "Выключить") : tr("Keep awake", "Не давать спать"))
         alert.addButton(withTitle: tr("Close", "Закрыть"))
+        if hidden { alert.addButton(withTitle: tr("Move the icon to the right", "Поставить значок справа")) }
 
         // Act on what the button said: a timer may run out while the alert is open.
-        if ask(alert) == .alertFirstButtonReturn {
+        switch ask(alert) {
+        case .alertFirstButtonReturn:
             wasOn ? stop() : start(for: nil)
+        case .alertThirdButtonReturn:
+            moveIconRight()
+        default:
+            break
         }
 
         return false
@@ -203,25 +297,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.menu = nil
     }
 
-    /** One caffeinate: who started it and the time left; the details and Stop go into its submenu. */
+    /** One caffeinate: whose it is and the time left; the details and Stop go into its submenu. */
     private func caffeinateItem(_ h: Holder, mine: Bool) -> NSMenuItem {
         let o = origin(of: h.pid)
         let place = o.folder.map { ($0 as NSString).lastPathComponent }
 
         var who: String
         var details: [String] = []
+        var launcherPid: pid_t?
 
         switch o.launcher {
         case _ where mine:
             who = tr("This app", "Это приложение")
         case .running(let name, let pid):
             who = place.map { "\(name) (\($0))" } ?? name
+            launcherPid = pid
             details.append(tr("Started by", "Запустил") + ": \(name), pid \(pid)")
         case .quit:
             who = tr("Launcher has quit", "Запустивший уже закрыт") + (place.map { " (\($0))" } ?? "")
             details.append(tr("Started by: a process that has quit", "Запустил: процесс, который уже закрыт"))
         case .unknown:
-            who = tr("Unknown launcher", "Запустивший неизвестен") + (place.map { " (\($0))" } ?? "")
+            who = o.waitsFor.map { tr("Waits for", "Ждёт") + " \($0.name)" + (place.map { " (\($0))" } ?? "") }
+                ?? tr("Unknown launcher", "Запустивший неизвестен") + (place.map { " (\($0))" } ?? "")
+        }
+
+        // The session says more than the app that started the caffeinate: all of them are "Claude Code (claude)".
+        if let s = o.session, !mine {
+            who = sessionLine(s, status: o.waitsForSession)
+            details.append(tr("Claude session", "Сессия Claude") + ": \(s.name)")
+        }
+
+        if let w = o.waitsFor, !mine, !o.waitsForSession, w.pid != launcherPid {
+            details.append(tr("Waits for", "Ждёт завершения") + ": \(w.name), pid \(w.pid)")
         }
 
         if let folder = o.folder { details.append(tr("Folder", "Папка") + ": \(folder)") }
@@ -249,6 +356,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let it = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         it.submenu = sub
         return it
+    }
+
+    /**
+     * "Apache Ignite RU · working" or "… · waiting for you 2 h 5 min": which session to look at, and whether it still
+     * needs the Mac. The status is shown only when caffeinate waits for the session itself: an idle session may have
+     * started a job that still runs.
+     */
+    private func sessionLine(_ s: ClaudeSession, status: Bool) -> String {
+        let name = String(s.name.count > 40 ? s.name.prefix(39) + "…" : s.name)
+        let since = s.statusSince.map { Date().timeIntervalSince($0) } ?? 0
+        let waited = since >= 60 ? " " + span(since, roundUp: false) : ""
+
+        guard status else { return name }
+
+        switch s.status {
+        case "busy", "shell":
+            return "\(name) · " + tr("working", "работает")
+        case "idle":
+            return "\(name) · " + tr("waiting for you", "ждёт вас") + waited
+        case "waiting":
+            return "\(name) · " + tr("needs your answer", "ждёт вашего ответа") + waited
+        default:
+            return name
+        }
     }
 
     @objc private func clicked() {
@@ -574,12 +705,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func until(_ left: TimeInterval?) -> String {
         guard let left else { return tr("no limit", "бессрочно") }
 
-        let minutes = (max(0, Int(left)) + 59) / 60
-        let h = "\(minutes / 60) " + tr("h", "ч"), m = "\(minutes % 60) " + tr("min", "мин")
-        let rest = minutes < 60 ? m : minutes % 60 == 0 ? h : "\(h) \(m)"
+        let rest = span(left, roundUp: true)
         let end = clock.string(from: Date().addingTimeInterval(left))
 
         return tr("\(rest) left, until \(end)", "ещё \(rest), до \(end)")
+    }
+
+    /** "45 min", "2 h 5 min", "3 d 4 h". */
+    private func span(_ seconds: TimeInterval, roundUp: Bool) -> String {
+        let minutes = (max(0, Int(seconds)) + (roundUp ? 59 : 0)) / 60
+        let d = minutes / 1440, h = minutes % 1440 / 60, m = minutes % 60
+        let day = tr("d", "д"), hour = tr("h", "ч"), min = tr("min", "мин")
+
+        if d > 0 { return h > 0 ? "\(d) \(day) \(h) \(hour)" : "\(d) \(day)" }
+        if h > 0 { return m > 0 ? "\(h) \(hour) \(m) \(min)" : "\(h) \(hour)" }
+        return "\(m) \(min)"
     }
 
     /**

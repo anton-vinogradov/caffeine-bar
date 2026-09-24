@@ -1,11 +1,12 @@
 #!/bin/zsh
 # Builds a universal CaffeineBar.app.
+#   ./build.sh test     - also runs the checks in tests/
 #   ./build.sh install  - also copies it to ~/Applications and (re)starts it
-#   ./build.sh zip      - also packs and signs build/CaffeineBar-<version>.zip(.sig) for a GitHub release
+#   ./build.sh zip      - also runs the checks, then packs and signs build/CaffeineBar-<version>.zip(.sig) for a GitHub release
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION=1.1.0
+VERSION=1.2.0
 APP=build/CaffeineBar.app
 
 rm -rf build
@@ -37,7 +38,19 @@ EOF
 
 codesign --force --sign - "$APP"
 
+check() {
+    swiftc -O -o build/tests tests/main.swift tests/Support.swift Power.swift Updater.swift
+    build/tests "$APP/Contents/MacOS/CaffeineBar"
+
+    # The app must get through its launch: a crash there would reach every installed copy.
+    "$APP/Contents/MacOS/CaffeineBar" --smoke
+    echo "ok   the app starts"
+}
+
 case "${1:-}" in
+    test)
+        check
+        ;;
     install)
         pkill -x CaffeineBar || true
         mkdir -p ~/Applications
@@ -46,6 +59,7 @@ case "${1:-}" in
         open ~/Applications/CaffeineBar.app
         ;;
     zip)
+        check
         # ditto keeps the bundle layout and code signature; extended attributes are local noise.
         ditto -c -k --norsrc --noextattr --keepParent "$APP" "build/CaffeineBar-$VERSION.zip"
         # The updater installs only zips signed with the key from the maintainer's Keychain.

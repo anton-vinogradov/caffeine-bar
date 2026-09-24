@@ -34,12 +34,15 @@ shows all of it. It stops only the processes you ask it to stop.
 - **Right-click** (or Control-click, or Option-click) to open the menu:
   - **Keep awake for…**: from 30 minutes to 8 hours.
   - **Display may sleep**: keep the system awake, but let the screen turn off.
-  - **caffeinate now**: every `caffeinate` process, who started it, from which
-    folder, and the time left, for example
-    `Claude Code (my-project) · 1 h 20 min left`. If the app or the session
-    that started it has quit, the line says so: that `caffeinate` is left over
-    and safe to stop. The submenu shows the flags and the start time, and
-    stops the process.
+  - **caffeinate now**: every `caffeinate` process: whose it is and the
+    time left. When it waits (`-w`) for a Claude Code session, the line names
+    the session and says what it does:
+    `Fix the login bug · working · 1 h 20 min left` or
+    `Fix the login bug · waiting for you 40 min · …`. Otherwise it names the
+    app that started it and the folder, for example
+    `Terminal (my-project) · 20 min left`. If that app has quit, the line says
+    so: the `caffeinate` is left over and safe to stop. The submenu shows the
+    details and stops the process.
   - **Also blocking idle sleep**: other apps that keep the Mac awake right
     now, for example the Claude desktop app.
   - **Start at login**. On the first start the app asks about it once.
@@ -65,8 +68,14 @@ becomes the parent: for an AI agent it is the agent's app, for a terminal
 command it is the terminal. When that app quits, macOS forgets it, and launchd
 adopts the process. A real launchd job was started by launchd and leads its own
 process group. A left-over process fails one of these checks, and that is how
-the menu knows its launcher has quit. The folder is the working directory of
+the menu knows its launcher has quit. A `caffeinate` that still waits for a
+live process is never called left over. The folder is the working directory of
 the process.
+
+Session names come from `~/.claude/sessions/<pid>.json`, which Claude Code
+writes for each of its sessions; sessions from the Claude desktop app carry a
+name. The format is not documented. If it changes, the line falls back to the
+app and the folder.
 
 ## Updates
 
@@ -88,10 +97,12 @@ These come from macOS, not from this app:
   display.
 - Timers stop while the Mac sleeps, the same as `caffeinate -t`. A 2-hour
   timer means 2 hours of awake time.
-- When the menu bar is full, macOS hides new icons behind the notch. Hold ⌘
-  and drag icons to make room, or hide some in System Settings → Menu Bar.
-  If you open the app again from Spotlight or Finder, it shows a small window
-  with the state and an on/off button.
+- When the menu bar is full, macOS hides new icons behind the notch. The app
+  notices this and offers once to move the cup next to the system icons on the
+  right. Then the icon of another app goes under the notch instead. You can
+  also hold ⌘ and drag icons, or hide some in System Settings → Menu Bar. If
+  you open the app again from Spotlight or Finder, it shows a small window with
+  the state and an on/off button.
 
 ## Install
 
@@ -147,6 +158,11 @@ Keep a backup of the key: `export` prints it for a password manager, and
 `import` reads it back on another Mac. Without the key, installed copies cannot
 update themselves, and users have to install the next version by hand.
 
+`./build.sh test` runs the checks in `tests/`: the updater with a throwaway
+key, the parsing of `caffeinate -w` and of session files, and what powerd
+reports. `./build.sh zip` runs them too, and starts the fresh build once,
+before it signs anything.
+
 For each release, raise `VERSION` in `build.sh`, then:
 
 ```bash
@@ -156,15 +172,20 @@ gh release create v1.2.3 build/CaffeineBar-1.2.3.zip build/CaffeineBar-1.2.3.zip
 
 ## Tip for scripts and agents
 
-Give `caffeinate` the pid of a process that lives as long as the job. Then
-`caffeinate` exits when the job ends and does not wait for the whole `-t`:
+Tie `caffeinate` to the job itself, so it exits when the job ends:
 
 ```bash
-caffeinate -dimsu -t 7200 -w $PPID &
+caffeinate -i make release        # holds the Mac while the command runs
+long-job & caffeinate -i -w $! &  # or while a background job runs
 ```
 
-`$PPID` is the process that started the current shell. For the shell tool of an
-AI agent, this is usually the agent itself.
+Use `-i` alone: it keeps the system awake and lets the screen turn off. `-d`
+keeps the screen on until `caffeinate` exits, and `-u` turns it on.
+
+`-w $PPID` in an AI agent's shell does not do this: `$PPID` there is the agent
+session, and a session can live for days. Such a `caffeinate` holds the Mac for
+the whole `-t`, long after the job. The Claude desktop app already keeps the
+Mac awake while a Claude Code session is working.
 
 ## License
 
